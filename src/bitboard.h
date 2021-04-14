@@ -101,11 +101,11 @@ struct Magic {
   // or by the 'fixed shift fancy magic bitboards' approach.
   unsigned index(Bitboard occupied) const {
 
-    if (HasPext)
+    if constexpr (HasPext)
         return unsigned(pext(occupied, mask));
 
 
-    if (Is64Bit)
+    if constexpr (Is64Bit)
     {
         // Fixed shift - leave 12 bits for rooks, and 9 bits for bishops.
         constexpr unsigned fixedShift = 64 - (Pt == ROOK ? 12 : 9);
