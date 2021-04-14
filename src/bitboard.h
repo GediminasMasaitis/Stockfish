@@ -81,30 +81,49 @@ extern Bitboard PseudoAttacks[PIECE_TYPE_NB][SQUARE_NB];
 extern Bitboard PawnAttacks[COLOR_NB][SQUARE_NB];
 
 
-/// Magic holds all magic bitboards relevant data for a single square
+// Used for storing pre-computed magics and their positions in
+// an attack table.
+struct KnownMagic
+{
+  Bitboard magic;
+  unsigned offset;
+};
+
+// Magic holds all magic bitboards relevant data for a single square
+template<PieceType Pt>
 struct Magic {
   Bitboard  mask;
   Bitboard  magic;
   Bitboard* attacks;
-  unsigned  shift;
+  unsigned  shift32;
 
-  // Compute the attack's index using the 'magic bitboards' approach
+  // Compute the attack's index using either the BMI2 BEXT instruction,
+  // or by the 'fixed shift fancy magic bitboards' approach.
   unsigned index(Bitboard occupied) const {
 
     if (HasPext)
         return unsigned(pext(occupied, mask));
 
-    if (Is64Bit)
-        return unsigned(((occupied & mask) * magic) >> shift);
 
+    if (Is64Bit)
+    {
+        // Fixed shift - leave 12 bits for rooks, and 9 bits for bishops.
+        constexpr unsigned fixedShift = 64 - (Pt == ROOK ? 12 : 9);
+        return unsigned(((occupied & mask) * magic) >> fixedShift);
+    }
+
+    // When 64 bits are not available, can use multiple distinct
+    // 32 bit operations in place of a 64-bit multiplication for a
+    // significant performance, however this prevents use of the
+    // current fixed shift magics implementation on 32 bit.
     unsigned lo = unsigned(occupied) & unsigned(mask);
     unsigned hi = unsigned(occupied >> 32) & unsigned(mask >> 32);
-    return (lo * unsigned(magic) ^ hi * unsigned(magic >> 32)) >> shift;
+    return (lo * unsigned(magic) ^ hi * unsigned(magic >> 32)) >> shift32;
   }
 };
 
-extern Magic RookMagics[SQUARE_NB];
-extern Magic BishopMagics[SQUARE_NB];
+extern Magic<  ROOK> RookMagics[SQUARE_NB];
+extern Magic<BISHOP> BishopMagics[SQUARE_NB];
 
 inline Bitboard square_bb(Square s) {
   assert(is_ok(s));
