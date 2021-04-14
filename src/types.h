@@ -91,11 +91,7 @@ constexpr bool HasPopCnt = true;
 constexpr bool HasPopCnt = false;
 #endif
 
-#ifdef USE_PEXT
-constexpr bool HasPext = true;
-#else
 constexpr bool HasPext = false;
-#endif
 
 #ifdef IS_64BIT
 constexpr bool Is64Bit = true;
