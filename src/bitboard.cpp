@@ -309,7 +309,7 @@ namespace {
         // apply to the 64 or 32 bits word to get the index for a non-fixed shift.
         m.shift32 = 32 - popcount(m.mask);
 
-        if (HasPext || !Is64Bit)
+        if constexpr (HasPext || !Is64Bit)
         {
             // For PEXT or fancy magic indexing, use the starting offset if on the
             // first square, and use the previous square's end offset as the current
@@ -338,7 +338,7 @@ namespace {
 
             // If using PEXT we don't need magic numbers and can get index directly,
             // and if using 64 bit then existing magics are pre-computed.
-            if (HasPext || Is64Bit) {
+            if constexpr (HasPext || Is64Bit) {
                 unsigned index = m.index(occupied);
                 m.attacks[index] = reference[size];
             }
@@ -347,7 +347,7 @@ namespace {
             occupied = (occupied - m.mask) & m.mask;
         } while (occupied);
 
-        if (HasPext || Is64Bit)
+        if constexpr (HasPext || Is64Bit)
             continue;
 
         PRNG rng(seeds[rank_of(s)]);
