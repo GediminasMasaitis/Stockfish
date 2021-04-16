@@ -303,12 +303,6 @@ namespace {
         // 's' computed on an empty board.
         m.mask = sliding_attack(Pt, s, 0) & ~edges;
 
-        // For 32 bit magics the index must be big enough to contain
-        // all the attacks for each possible subset of the mask and so is 2 power
-        // the number of 1s of the mask. Hence we deduce the size of the shift to
-        // apply to the 64 or 32 bits word to get the index for a non-fixed shift.
-        m.shift32 = 32 - popcount(m.mask);
-
         if constexpr (HasPext || !Is64Bit)
         {
             // For PEXT or fancy magic indexing, use the starting offset if on the
@@ -317,6 +311,13 @@ namespace {
             // and bishops are stored in entries 0x190000 through 0x19147F.
             constexpr int startOffset = Pt == ROOK ? 0 : 0x19000;
             m.attacks = s == SQ_A1 ? table + startOffset : magics[s - 1].attacks + size;
+
+            // For 32 bit magics the index must be big enough to contain
+            // all the attacks for each possible subset of the mask and so is 2 power
+            // the number of 1s of the mask. Hence we deduce the size of the shift to
+            // apply to the 64 or 32 bits word to get the index for a non-fixed shift.
+            if constexpr (!HasPext)
+                m.shift32 = 32 - popcount(m.mask);
         }
         else
         {
