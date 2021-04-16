@@ -119,12 +119,11 @@ struct Magic {
     // 32 bit operations in place of a 64-bit multiplication for a
     // significant performance, however this prevents use of the
     // current fixed shift magics implementation on 32 bit.
-    if constexpr (!HasPext && !Is64Bit)
-    {
-        unsigned lo = unsigned(occupied) & unsigned(mask);
-        unsigned hi = unsigned(occupied >> 32) & unsigned(mask >> 32);
-        return (lo * unsigned(magic) ^ hi * unsigned(magic >> 32)) >> shift32;
-    }
+#if !defined(IS_64BIT) && !defined(USE_PEXT)
+    unsigned lo = unsigned(occupied) & unsigned(mask);
+    unsigned hi = unsigned(occupied >> 32) & unsigned(mask >> 32);
+    return (lo * unsigned(magic) ^ hi * unsigned(magic >> 32)) >> shift32;
+#endif
   }
 };
 
