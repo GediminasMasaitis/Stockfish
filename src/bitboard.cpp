@@ -19,6 +19,9 @@
 #include <algorithm>
 #include <bitset>
 #include <array>
+#include <iostream>
+#include <iomanip>
+#include <fstream>
 
 #include "bitboard.h"
 #include "misc.h"
@@ -34,8 +37,8 @@ Bitboard BetweenBB[SQUARE_NB][SQUARE_NB];
 Bitboard PseudoAttacks[PIECE_TYPE_NB][SQUARE_NB];
 Bitboard PawnAttacks[COLOR_NB][SQUARE_NB];
 
-Magic<  ROOK> RookMagics[SQUARE_NB];
-Magic<BISHOP> BishopMagics[SQUARE_NB];
+//Magic<  ROOK> RookMagics[SQUARE_NB];
+//Magic<BISHOP> BishopMagics[SQUARE_NB];
 
 namespace {
   using KnownMagicArray = std::array<KnownMagic, SQUARE_NB>;
@@ -179,7 +182,7 @@ namespace {
   };
 
   // If using PEXT indexing or 32 bit magics, do not use reduced table size.
-  Bitboard SlideAttackTable[HasPext || !Is64Bit ? 0x19000 + 0x1480 : 88772] {};
+  //Bitboard SlideAttackTable[HasPext || !Is64Bit ? 0x19000 + 0x1480 : 88772] {};
 
   template<PieceType Pt>
   void init_magics(Bitboard table[], Magic<Pt> magics[]);
@@ -216,7 +219,7 @@ std::string Bitboards::pretty(Bitboard b) {
 
 /// Bitboards::init() initializes various bitboard tables. It is called at
 /// startup and relies on global objects to be already zero-initialized.
-
+	
 void Bitboards::init() {
 
   for (unsigned i = 0; i < (1 << 16); ++i)
@@ -229,8 +232,28 @@ void Bitboards::init() {
       for (Square s2 = SQ_A1; s2 <= SQ_H8; ++s2)
           SquareDistance[s1][s2] = std::max(distance<File>(s1, s2), distance<Rank>(s1, s2));
 
-  init_magics<  ROOK>(SlideAttackTable, RookMagics);
-  init_magics<BISHOP>(SlideAttackTable, BishopMagics);
+ // init_magics<  ROOK>(SlideAttackTable, RookMagics);
+ // init_magics<BISHOP>(SlideAttackTable, BishopMagics);
+
+	//std::ofstream magics;
+	//magics.open("C:/Temp/mag.txt");
+ //   magics << "constexpr std::array<Magic<ROOK>, SQUARE_NB> RookMagics = {\n";
+	////for(auto value : RookMagics)
+	//for(auto i = 0; i < 64; i++)
+	//{
+ //       const auto& known = KnownRookMagics[i];
+ //       const auto& magic = RookMagics[i];
+	//	magics << "  Magic<ROOK> { 0x" << std::hex << std::setfill('0') << std::setw(16) << magic.mask << ", 0x" << std::setfill('0') << std::setw(16) << magic.magic << ", SlideAttackTable + " << std::dec << known.offset << ", 0 },\n";
+	//}
+ //   magics << "};\n\nconstexpr std::array<Magic<BISHOP>, SQUARE_NB> BishopMagics = {\n";
+ //   for (auto i = 0; i < 64; i++)
+ //   {
+ //       const auto& known = KnownBishopMagics[i];
+ //       const auto& magic = BishopMagics[i];
+ //       magics << "  Magic<BISHOP> { 0x" << std::hex << std::setfill('0') << std::setw(16) << magic.mask << ", 0x" << std::setfill('0') << std::setw(16) << magic.magic << ", SlideAttackTable + " << std::dec << known.offset << ", 0 },\n";
+ //   }
+ //   magics << "};\n";
+	//magics.close();
 
   for (Square s1 = SQ_A1; s1 <= SQ_H8; ++s1)
   {
