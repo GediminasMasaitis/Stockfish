@@ -316,8 +316,9 @@ namespace {
             // all the attacks for each possible subset of the mask and so is 2 power
             // the number of 1s of the mask. Hence we deduce the size of the shift to
             // apply to the 64 or 32 bits word to get the index for a non-fixed shift.
-            if constexpr (!HasPext)
+#if !defined(IS_64BIT) && !defined(USE_PEXT)
                 m.shift32 = 32 - popcount(m.mask);
+#endif
         }
         else
         {
