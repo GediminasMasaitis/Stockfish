@@ -96,9 +96,7 @@ struct Magic {
   Bitboard  magic;
   Bitboard* attacks;
 
-#if !defined(IS_64BIT) && !defined(USE_PEXT)
   unsigned  shift32;
-#endif
 
   // Compute the attack's index using either the BMI2 PEXT instruction,
   // or by the 'fixed shift fancy magic bitboards' approach.
@@ -119,11 +117,9 @@ struct Magic {
     // 32 bit operations in place of a 64-bit multiplication for
     // some performance, however this prevents use of the
     // current fixed shift magics implementation on 32 bit.
-#if !defined(IS_64BIT) && !defined(USE_PEXT)
     unsigned lo = unsigned(occupied) & unsigned(mask);
     unsigned hi = unsigned(occupied >> 32) & unsigned(mask >> 32);
     return (lo * unsigned(magic) ^ hi * unsigned(magic >> 32)) >> shift32;
-#endif
   }
 };
 
