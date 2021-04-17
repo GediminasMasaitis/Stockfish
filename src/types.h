@@ -76,6 +76,7 @@
 #  include <xmmintrin.h> // Intel and Microsoft header for _mm_prefetch()
 #endif
 
+#undef USE_PEXT
 #if defined(USE_PEXT)
 #  include <immintrin.h> // Header for _pext_u64() intrinsic
 #  define pext(b, m) _pext_u64(b, m)
