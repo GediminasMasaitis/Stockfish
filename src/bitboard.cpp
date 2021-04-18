@@ -178,7 +178,7 @@ namespace {
     KnownMagic { 0x007fff9fdf7ff813u,  16076 }
   };
 
-  // If using PEXT indexing or 32 bit magics, do not use reduced table size.
+  // If using PEXT indexing, do not use reduced table size.
   Bitboard SlideAttackTable[HasPext || !Is64Bit ? 0x19000 + 0x1480 : 88772] {};
 
   template<PieceType Pt>
@@ -285,11 +285,7 @@ namespace {
   // For 32 bits, we fall back to the regular "fancy magic bitboards" approach.
   template<PieceType Pt>
   void init_magics(Bitboard table[], Magic<Pt> magics[]) {
-    // Optimal PRNG seeds to pick the correct magics in the shortest time
-    int seeds[RANK_NB] = { 8977, 44560, 54343, 38998,  5731, 95205, 104912, 17020 };
-
-    Bitboard occupancy[4096], reference[4096];
-    int epoch[4096] = {}, cnt = 0, size = 0;
+    int size = 0;
 
     for (Square s = SQ_A1; s <= SQ_H8; ++s)
     {
@@ -303,20 +299,12 @@ namespace {
         // 's' computed on an empty board.
         m.mask = sliding_attack(Pt, s, 0) & ~edges;
 
-        // For 32 bit magics the index must be big enough to contain
-        // all the attacks for each possible subset of the mask and so is 2 power
-        // the number of 1s of the mask. Hence we deduce the size of the shift to
-        // apply to the 64 or 32 bits word to get the index for a non-fixed shift.
-#if !defined(IS_64BIT) && !defined(USE_PEXT)
-        m.shift32 = 32 - popcount(m.mask);
-#endif
-
-        if constexpr (HasPext || !Is64Bit)
+        if constexpr (HasPext)
         {
-            // For PEXT or fancy magic indexing, use the starting offset if on the
-            // first square, and use the previous square's end offset as the current
-            // square's starting offset. Rooks are stored in entries 0 through 0x18FFFF,
-            // and bishops are stored in entries 0x190000 through 0x19147F.
+            // For PEXT, use the starting offset if on the first square, and use the
+            // previous square's end offset as the current square's starting offset.
+            // Rooks are stored in entries 0 through 0x18FFFF,
+            // bishops are stored in entries 0x190000 through 0x19147F.
             constexpr int startOffset = Pt == ROOK ? 0 : 0x19000;
             m.attacks = s == SQ_A1 ? table + startOffset : magics[s - 1].attacks + size;
         }
@@ -333,53 +321,18 @@ namespace {
 
         // Use Carry-Rippler trick to enumerate all subsets of masks[s] and
         // store the corresponding sliding attack bitboard in the attack table.
-        Bitboard occupied = size = 0;
+        Bitboard occupied = 0;
+        size = 0;
         do {
-            occupancy[size] = occupied;
-            reference[size] = sliding_attack(Pt, s, occupied);
+            Bitboard reference = sliding_attack(Pt, s, occupied);
 
-            // If using PEXT we don't need magic numbers and can get index directly,
-            // and if using 64 bit then existing magics are pre-computed.
-            if constexpr (HasPext || Is64Bit) {
-                unsigned index = m.index(occupied);
-                assert(m.attacks[index] == 0 || m.attacks[index] == reference[size]);
-                m.attacks[index] = reference[size];
-            }
+            unsigned index = m.index(occupied);
+            assert(m.attacks[index] == 0 || m.attacks[index] == reference);
+            m.attacks[index] = reference;
 
             size++;
             occupied = (occupied - m.mask) & m.mask;
         } while (occupied);
-
-        if constexpr (HasPext || Is64Bit)
-            continue;
-
-        PRNG rng(seeds[rank_of(s)]);
-        // Find a magic for square 's' picking up an (almost) random number
-        // until we find the one that passes the verification test.
-        for (int i = 0; i < size; )
-        {
-            for (m.magic = 0; popcount((m.magic * m.mask) >> 56) < 6; )
-                m.magic = rng.sparse_rand<Bitboard>();
-
-            // A good magic must map every possible occupancy to an index that
-            // looks up the correct sliding attack in the attacks[s] database.
-            // Note that we build up the database for square 's' as a side
-            // effect of verifying the magic. Keep track of the attempt count
-            // and save it in epoch[], little speed-up trick to avoid resetting
-            // m.attacks[] after every failed attempt.
-            for (++cnt, i = 0; i < size; ++i)
-            {
-                unsigned idx = m.index(occupancy[i]);
-
-                if (epoch[idx] < cnt)
-                {
-                    epoch[idx] = cnt;
-                    m.attacks[idx] = reference[i];
-                }
-                else if (m.attacks[idx] != reference[i])
-                    break;
-            }
-        }
     }
   }
 }
