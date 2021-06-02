@@ -23,6 +23,8 @@
 #include <iomanip>
 #include <sstream>
 
+#include "nnue/evaluate_nnue.h"
+
 #include "bitboard.h"
 #include "misc.h"
 #include "movegen.h"
@@ -31,6 +33,9 @@
 #include "tt.h"
 #include "uci.h"
 #include "syzygy/tbprobe.h"
+
+#include "tools/packed_sfen.h"
+#include "tools/sfen_packer.h"
 
 using std::string;
 
@@ -79,7 +84,7 @@ std::ostream& operator<<(std::ostream& os, const Position& pos) {
       && !pos.can_castle(ANY_CASTLING))
   {
       StateInfo st;
-      ASSERT_ALIGNED(&st, Eval::NNUE::kCacheLineSize);
+      ASSERT_ALIGNED(&st, Eval::NNUE::CacheLineSize);
 
       Position p;
       p.set(pos.fen(), pos.is_chess960(), &st, pos.this_thread());
@@ -754,7 +759,7 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
       else
           st->nonPawnMaterial[them] -= PieceValue[MG][captured];
 
-      if (Eval::useNNUE)
+      if (Eval::NNUE::useNNUE != Eval::NNUE::UseNNUEMode::False)
       {
           dp.dirty_num = 2;  // 1 piece moved, 1 piece captured
           dp.piece[1] = captured;
@@ -798,7 +803,7 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
   // Move the piece. The tricky Chess960 castling is handled earlier
   if (type_of(m) != CASTLING)
   {
-      if (Eval::useNNUE)
+      if (Eval::NNUE::useNNUE != Eval::NNUE::UseNNUEMode::False)
       {
           dp.piece[0] = pc;
           dp.from[0] = from;
@@ -829,7 +834,7 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
           remove_piece(to);
           put_piece(promotion, to);
 
-          if (Eval::useNNUE)
+          if (Eval::NNUE::useNNUE != Eval::NNUE::UseNNUEMode::False)
           {
               // Promoting pawn to SQ_NONE, promoted piece from SQ_NONE
               dp.to[0] = SQ_NONE;
@@ -967,7 +972,7 @@ void Position::do_castling(Color us, Square from, Square& to, Square& rfrom, Squ
   rto = relative_square(us, kingSide ? SQ_F1 : SQ_D1);
   to = relative_square(us, kingSide ? SQ_G1 : SQ_C1);
 
-  if (Do && Eval::useNNUE)
+  if (Do && Eval::NNUE::useNNUE != Eval::NNUE::UseNNUEMode::False)
   {
       auto& dp = st->dirtyPiece;
       dp.piece[0] = make_piece(us, KING);
@@ -988,7 +993,7 @@ void Position::do_castling(Color us, Square from, Square& to, Square& rfrom, Squ
 }
 
 
-/// Position::do(undo)_null_move() is used to do(undo) a "null move": it flips
+/// Position::do_null_move() is used to do a "null move": it flips
 /// the side to move without executing any move on the board.
 
 void Position::do_null_move(StateInfo& newSt) {
@@ -1001,6 +1006,7 @@ void Position::do_null_move(StateInfo& newSt) {
   newSt.previous = st;
   st = &newSt;
 
+  // Used by NNUE
   st->dirtyPiece.dirty_num = 0;
   st->dirtyPiece.piece[0] = NO_PIECE; // Avoid checks in UpdateAccumulator()
   st->accumulator.state[WHITE] = Eval::NNUE::EMPTY;
@@ -1026,6 +1032,9 @@ void Position::do_null_move(StateInfo& newSt) {
 
   assert(pos_is_ok());
 }
+
+
+/// Position::undo_null_move() must be used to undo a "null move"
 
 void Position::undo_null_move() {
 
@@ -1092,8 +1101,8 @@ bool Position::see_ge(Move m, Value threshold) const {
       if (!(stmAttackers = attackers & pieces(stm)))
           break;
 
-      // Don't allow pinned pieces to attack (except the king) as long as
-      // there are pinners on their original square.
+      // Don't allow pinned pieces to attack as long as there are
+      // pinners on their original square.
       if (pinners(~stm) & occupied)
           stmAttackers &= ~blockers_for_king(stm);
 
@@ -1170,6 +1179,22 @@ bool Position::is_draw(int ply) const {
   // Return a draw score if a position repeats once earlier but strictly
   // after the root, or repeats twice before or at the root.
   return st->repetition && st->repetition < ply;
+}
+
+
+/// Position::is_fifty_move_draw() returns true if a game can be claimed
+/// by a fifty-move draw rule.
+
+bool Position::is_fifty_move_draw() const {
+
+  return (st->rule50 > 99 && (!checkers() || MoveList<LEGAL>(*this).size()));
+}
+
+
+/// Position::is_three_fold_repetition() returns true if there is 3-fold repetition.
+bool Position::is_three_fold_repetition() const {
+
+  return st->repetition < 0;
 }
 
 
@@ -1315,7 +1340,7 @@ bool Position::pos_is_ok() const {
               assert(0 && "pos_is_ok: Bitboards");
 
   StateInfo si = *st;
-  ASSERT_ALIGNED(&si, Eval::NNUE::kCacheLineSize);
+  ASSERT_ALIGNED(&si, Eval::NNUE::CacheLineSize);
 
   set_state(&si);
   if (std::memcmp(&si, st, sizeof(StateInfo)))
@@ -1339,6 +1364,20 @@ bool Position::pos_is_ok() const {
       }
 
   return true;
+}
+
+// Add a function that directly unpacks for speed. It's pretty tough.
+// Write it by combining packer::unpack() and Position::set().
+// If there is a problem with the passed phase and there is an error, non-zero is returned.
+int Position::set_from_packed_sfen(const Tools::PackedSfen& sfen , StateInfo* si, Thread* th)
+{
+  return Tools::set_from_packed_sfen(*this, sfen, si, th);
+}
+
+// Get the packed sfen. Returns to the buffer specified in the argument.
+void Position::sfen_pack(Tools::PackedSfen& sfen)
+{
+  sfen = Tools::sfen_pack(*this);
 }
 
 } // namespace Stockfish

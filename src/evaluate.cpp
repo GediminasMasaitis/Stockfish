@@ -27,15 +27,17 @@
 #include <streambuf>
 #include <vector>
 
+#include "nnue/evaluate_nnue.h"
+
 #include "bitboard.h"
 #include "evaluate.h"
 #include "material.h"
 #include "misc.h"
 #include "pawns.h"
 #include "thread.h"
+#include "timeman.h"
 #include "uci.h"
 #include "incbin/incbin.h"
-
 
 // Macro to embed the default efficiently updatable neural network (NNUE) file
 // data in the engine binary (using incbin.h, by Dale Weiler).
@@ -52,15 +54,28 @@
   const unsigned int         gEmbeddedNNUESize = 1;
 #endif
 
-
 using namespace std;
 
 namespace Stockfish {
 
 namespace Eval {
 
-  bool useNNUE;
-  string eval_file_loaded = "None";
+  namespace NNUE {
+    string eval_file_loaded = "None";
+    UseNNUEMode useNNUE;
+
+    static UseNNUEMode nnue_mode_from_option(const UCI::Option& mode)
+    {
+      if (mode == "false")
+        return UseNNUEMode::False;
+      else if (mode == "true")
+         return UseNNUEMode::True;
+      else if (mode == "pure")
+        return UseNNUEMode::Pure;
+
+      return UseNNUEMode::False;
+    }
+  }
 
   /// NNUE::init() tries to load a NNUE network at startup time, or when the engine
   /// receives a UCI command "setoption name EvalFile value nn-[a-z0-9]{12}.nnue"
@@ -72,8 +87,8 @@ namespace Eval {
 
   void NNUE::init() {
 
-    useNNUE = Options["Use NNUE"];
-    if (!useNNUE)
+    useNNUE = nnue_mode_from_option(Options["Use NNUE"]);
+    if (useNNUE == UseNNUEMode::False)
         return;
 
     string eval_file = string(Options["EvalFile"]);
@@ -113,12 +128,36 @@ namespace Eval {
         }
   }
 
+  /// NNUE::export_net() exports the currently loaded network to a file
+  void NNUE::export_net(const std::optional<std::string>& filename) {
+    std::string actualFilename;
+
+    if (filename.has_value())
+        actualFilename = filename.value();
+    else
+    {
+        if (eval_file_loaded != EvalFileDefaultName)
+        {
+             sync_cout << "Failed to export a net. A non-embedded net can only be saved if the filename is specified." << sync_endl;
+             return;
+        }
+        actualFilename = EvalFileDefaultName;
+    }
+
+    ofstream stream(actualFilename, std::ios_base::binary);
+
+    if (save_eval(stream))
+        sync_cout << "Network saved successfully to " << actualFilename << "." << sync_endl;
+    else
+        sync_cout << "Failed to export a net." << sync_endl;
+  }
+
   /// NNUE::verify() verifies that the last net used was loaded successfully
   void NNUE::verify() {
 
     string eval_file = string(Options["EvalFile"]);
 
-    if (useNNUE && eval_file_loaded != eval_file)
+    if (useNNUE != UseNNUEMode::False && eval_file_loaded != eval_file)
     {
         UCI::OptionsMap defaults;
         UCI::init(defaults);
@@ -138,7 +177,7 @@ namespace Eval {
         exit(EXIT_FAILURE);
     }
 
-    if (useNNUE)
+    if (useNNUE != UseNNUEMode::False)
         sync_cout << "info string NNUE evaluation using " << eval_file << " enabled" << sync_endl;
     else
         sync_cout << "info string classical evaluation enabled" << sync_endl;
@@ -906,7 +945,7 @@ namespace {
     Color strongSide = eg > VALUE_DRAW ? WHITE : BLACK;
     int sf = me->scale_factor(pos, strongSide);
 
-    // If scale factor is not already specific, scale down via general heuristics
+    // If scale factor is not already specific, scale up/down via general heuristics
     if (sf == SCALE_FACTOR_NORMAL)
     {
         if (pos.opposite_bishops())
@@ -1033,7 +1072,7 @@ make_v:
     v = (v / 16) * 16;
 
     // Side to move point of view
-    v = (pos.side_to_move() == WHITE ? v : -v) + Tempo;
+    v = (pos.side_to_move() == WHITE ? v : -v);
 
     return v;
   }
@@ -1082,21 +1121,29 @@ make_v:
 
 Value Eval::evaluate(const Position& pos) {
 
+  pos.this_thread()->on_eval();
+
   Value v;
 
-  if (!Eval::useNNUE)
+  if (NNUE::useNNUE == NNUE::UseNNUEMode::Pure) {
+      v = NNUE::evaluate(pos);
+
+      // Guarantee evaluation does not hit the tablebase range
+      v = std::clamp(v, VALUE_TB_LOSS_IN_MAX_PLY + 1, VALUE_TB_WIN_IN_MAX_PLY - 1);
+
+      return v;
+  }
+  else if (NNUE::useNNUE == NNUE::UseNNUEMode::False)
       v = Evaluation<NO_TRACE>(pos).value();
   else
   {
       // Scale and shift NNUE for compatibility with search and classical evaluation
       auto  adjusted_NNUE = [&]()
       {
-         int material = pos.non_pawn_material() + 4 * PawnValueMg * pos.count<PAWN>();
-         int scale =  580
-                    + material / 32
-                    - 4 * pos.rule50_count();
 
-         Value nnue = NNUE::evaluate(pos) * scale / 1024 + Tempo;
+         int scale = 903 + 28 * pos.count<PAWN>() + 28 * pos.non_pawn_material() / 1024;
+
+         Value nnue = NNUE::evaluate(pos, true) * scale / 1024;
 
          if (pos.is_chess960())
              nnue += fix_FRC(pos);
@@ -1104,27 +1151,29 @@ Value Eval::evaluate(const Position& pos) {
          return nnue;
       };
 
-      // If there is PSQ imbalance use classical eval, with small probability if it is small
+      // If there is PSQ imbalance we use the classical eval. We also introduce
+      // a small probability of using the classical eval when PSQ imbalance is small.
       Value psq = Value(abs(eg_value(pos.psq_score())));
       int   r50 = 16 + pos.rule50_count();
       bool  largePsq = psq * 16 > (NNUEThreshold1 + pos.non_pawn_material() / 64) * r50;
-      bool  classical = largePsq || (psq > PawnValueMg / 4 && !(pos.this_thread()->nodes & 0xB));
+      bool  classical = largePsq;
 
       // Use classical evaluation for really low piece endgames.
-      // The most critical case is a bishop + A/H file pawn vs naked king draw.
-      bool strongClassical = pos.non_pawn_material() < 2 * RookValueMg && pos.count<PAWN>() < 2;
+      // One critical case is the draw for bishop + A/H file pawn vs naked king.
+      bool lowPieceEndgame =   pos.non_pawn_material() == BishopValueMg
+                            || (pos.non_pawn_material() < 2 * RookValueMg && pos.count<PAWN>() < 2);
 
-      v = classical || strongClassical ? Evaluation<NO_TRACE>(pos).value() : adjusted_NNUE();
+      v = classical || lowPieceEndgame ? Evaluation<NO_TRACE>(pos).value()
+                                       : adjusted_NNUE();
 
       // If the classical eval is small and imbalance large, use NNUE nevertheless.
-      // For the case of opposite colored bishops, switch to NNUE eval with
-      // small probability if the classical eval is less than the threshold.
-      if (   largePsq
-          && !strongClassical
+      // For the case of opposite colored bishops, switch to NNUE eval with small
+      // probability if the classical eval is less than the threshold.
+      if (    largePsq
+          && !lowPieceEndgame
           && (   abs(v) * 16 < NNUEThreshold2 * r50
               || (   pos.opposite_bishops()
-                  && abs(v) * 16 < (NNUEThreshold1 + pos.non_pawn_material() / 64) * r50
-                  && !(pos.this_thread()->nodes & 0xB))))
+                  && abs(v) * 16 < (NNUEThreshold1 + pos.non_pawn_material() / 64) * r50)))
           v = adjusted_NNUE();
   }
 
@@ -1182,7 +1231,7 @@ std::string Eval::trace(const Position& pos) {
 
   ss << "\nClassical evaluation: " << to_cp(v) << " (white side)\n";
 
-  if (Eval::useNNUE)
+  if (NNUE::useNNUE != NNUE::UseNNUEMode::False)
   {
       v = NNUE::evaluate(pos);
       v = pos.side_to_move() == WHITE ? v : -v;

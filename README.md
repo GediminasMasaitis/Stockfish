@@ -21,21 +21,26 @@ intrinsics available on most CPUs (sse2, avx2, neon, or similar).
 
 This distribution of Stockfish consists of the following files:
 
-  * Readme.md, the file you are currently reading.
+  * [Readme.md](https://github.com/official-stockfish/Stockfish/blob/master/README.md), the file you are currently reading.
 
-  * Copying.txt, a text file containing the GNU General Public License version 3.
-  
-  * AUTHORS, a text file with the list of authors for the project
+  * [Copying.txt](https://github.com/official-stockfish/Stockfish/blob/master/Copying.txt), a text file containing the GNU General Public License version 3.
 
-  * src, a subdirectory containing the full source code, including a Makefile
+  * [AUTHORS](https://github.com/official-stockfish/Stockfish/blob/master/AUTHORS), a text file with the list of authors for the project
+
+  * [src](https://github.com/official-stockfish/Stockfish/tree/master/src), a subdirectory containing the full source code, including a Makefile
     that can be used to compile Stockfish on Unix-like systems.
 
-  * a file with the .nnue extension, storing the neural network for the NNUE 
+  * a file with the .nnue extension, storing the neural network for the NNUE
     evaluation. Binary distributions will have this file embedded.
 
-## UCI options
+## The UCI protocol and available options
 
-Currently, Stockfish has the following UCI options:
+The Universal Chess Interface (UCI) is a standard protocol used to communicate with a chess engine,
+and is the recommended way to do so for typical graphical user interfaces (GUI) or chess tools.
+
+Stockfish implements most commands as described in [the UCI protocol](https://www.shredderchess.com/download/div/uci.zip)
+
+For users, the following UCI options, which can typically be set via a GUI, are available in Stockfish:
 
   * #### Threads
     The number of CPU threads used for searching a position. For best performance, set
@@ -136,6 +141,69 @@ Currently, Stockfish has the following UCI options:
   * #### Debug Log File
     Write all communication to and from the engine into a text file.
 
+For developers the following non-standard commands might be of interest, mainly useful for debugging:
+
+  * #### bench ttSize threads limit fenFile limitType evalType
+    Performs a standard benchmark using various options. The signature or standard node
+    count is obtained using all defaults. `bench` is currently `bench 16 1 13 default depth mixed`.
+
+  * #### compiler
+    Give information about the compiler and environment used for building a binary.
+
+  * #### d
+    Display the current position, with ascii art and fen.
+
+  * #### eval
+    Return the evaluation of the current position.
+
+  * #### export_net [filename]
+    Exports the currently loaded network to a file.
+    If the currently loaded network is the embedded network and the filename
+    is not specified then the network is saved to the file matching the name
+    of the embedded network, as defined in evaluate.h.
+    If the currently loaded network is not the embedded network (some net set
+    through the UCI setoption) then the filename parameter is required and the
+    network is saved into that file.
+
+  * #### flip
+    Flips the side to move.
+
+### Generating Training Data
+
+To generate training data from the classic eval, use the generate_training_data command with the setting "Use NNUE" set to "false". The given example is generation in its simplest form. There are more commands.
+
+```
+uci
+setoption name PruneAtShallowDepth value false
+setoption name Use NNUE value false
+setoption name Threads value X
+setoption name Hash value Y
+setoption name SyzygyPath value path
+isready
+generate_training_data depth A count B keep_draws 1 eval_limit 32000
+```
+
+- `A` is the searched depth per move, or how far the engine looks forward. This value is an integer.
+- `B` is the amount of positions generated. This value is also an integer.
+
+Specify how many threads and how much memory you would like to use with the `x` and `y` values. The option SyzygyPath is not necessary, but if you would like to use it, you must first have Syzygy endgame tablebases on your computer, which you can find [here](http://oics.olympuschess.com/tracker/index.php). You will need to have a torrent client to download these tablebases, as that is probably the fastest way to obtain them. The `path` is the path to the folder containing those tablebases. It does not have to be surrounded in quotes.
+
+This will create a file named "training_data.binpack" in the same folder as the binary containing the generated training data. Once generation is done, you can rename the file to something like "1billiondepth12.binpack" to remember the depth and quantity of the positions and move it to a folder named "trainingdata" in the same directory as the binaries.
+
+You will also need validation data that is used for loss calculation and accuracy computation. Validation data is generated in the same way as training data, but generally at most 1 million positions should be used as there's no need for more and it would just slow the learning process down. It may also be better to slightly increase the depth for validation data. After generation you can rename the validation data file to "val.binpack" and drop it in a folder named "validationdata" in the same directory to make it easier.
+
+## Training data formats.
+
+Currently there are 3 training data formats. Two of them are supported directly.
+
+- `.bin` - the original training data format. Uses 40 bytes per entry. Is supported directly by the `generate_training_data` command.
+- `.plain` - a human readable training data format. This one is not supported directly by the `generate_training_data` command. It should not be used for data exchange because it's less compact than other formats. It is mostly useful for inspection of the data.
+- `.binpack` - a compact binary training data format that exploits positions chains to further reduce size. It uses on average between 2 to 3 bytes per entry when generating data with `generate_training_data`. It is supported directly by `generate_training_data` command. It is currently the default for the `generate_training_data` command. A more in depth description can be found [here](docs/binpack.md)
+
+### Conversion between formats.
+
+There is a builting converted that support all 3 formats described above. Any of them can be converted to any other. For more information and usage guide see [here](docs/convert.md).
+
 ## A note on classical evaluation versus NNUE evaluation
 
 Both approaches assign a value to a position that is used in alpha-beta (PVS) search
@@ -162,7 +230,7 @@ Stockfish binary, but the default value of the EvalFile UCI option is the name o
 that is guaranteed to be compatible with that binary.
 
 2) to use the NNUE evaluation, the additional data file with neural network parameters
-needs to be available. Normally, this file is already embedded in the binary or it 
+needs to be available. Normally, this file is already embedded in the binary or it
 can be downloaded. The filename for the default (recommended) net can be found as the default
 value of the `EvalFile` UCI option, with the format `nn-[SHA256 first 12 digits].nnue`
 (for instance, `nn-c157e0a5755b.nnue`). This file can be downloaded from
@@ -175,7 +243,7 @@ replacing `[filename]` as needed.
 
 If the engine is searching a position that is not in the tablebases (e.g.
 a position with 8 pieces), it will access the tablebases during the search.
-If the engine reports a very large score (typically 153.xx), this means 
+If the engine reports a very large score (typically 153.xx), this means
 it has found a winning line into a tablebase position.
 
 If the engine is given a position to search that is in the tablebases, it
@@ -297,4 +365,4 @@ you are distributing. If you make any changes to the source code,
 these changes must also be made available under the GPL.
 
 For full details, read the copy of the GPL v3 found in the file named
-*Copying.txt*.
+[*Copying.txt*](https://github.com/official-stockfish/Stockfish/blob/master/Copying.txt).

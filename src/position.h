@@ -31,6 +31,9 @@
 
 #include "nnue/nnue_accumulator.h"
 
+#include "tools/packed_sfen.h"
+#include "tools/sfen_packer.h"
+
 namespace Stockfish {
 
 /// StateInfo struct stores information needed to restore a Position object to
@@ -51,11 +54,11 @@ struct StateInfo {
   // Not copied when making a move (will be recomputed anyhow)
   Key        key;
   Bitboard   checkersBB;
-  Piece      capturedPiece;
   StateInfo* previous;
   Bitboard   blockersForKing[COLOR_NB];
   Bitboard   pinners[COLOR_NB];
   Bitboard   checkSquares[PIECE_TYPE_NB];
+  Piece      capturedPiece;
   int        repetition;
 
   // Used by NNUE
@@ -115,7 +118,6 @@ public:
   Bitboard blockers_for_king(Color c) const;
   Bitboard check_squares(PieceType pt) const;
   Bitboard pinners(Color c) const;
-  bool is_discovered_check_on_king(Color c, Move m) const;
 
   // Attacks to/from a given square
   Bitboard attackers_to(Square s) const;
@@ -158,6 +160,8 @@ public:
   bool is_chess960() const;
   Thread* this_thread() const;
   bool is_draw(int ply) const;
+  bool is_fifty_move_draw() const;
+  bool is_three_fold_repetition() const;
   bool has_game_cycle(int ply) const;
   bool has_repeated() const;
   int rule50_count() const;
@@ -171,6 +175,28 @@ public:
 
   // Used by NNUE
   StateInfo* state() const;
+
+  // --sfenization helper
+
+  friend int Tools::set_from_packed_sfen(Position& pos, const Tools::PackedSfen& sfen, StateInfo* si, Thread* th);
+
+  // Get the packed sfen. Returns to the buffer specified in the argument.
+  // Do not include gamePly in pack.
+  void sfen_pack(Tools::PackedSfen& sfen);
+
+  // It is slow to go through sfen, so I made a function to set packed sfen directly.
+  // Equivalent to pos.set(sfen_unpack(data),si,th);.
+  // If there is a problem with the passed phase and there is an error, non-zero is returned.
+  // PackedSfen does not include gamePly so it cannot be restored. If you want to set it, specify it with an argument.
+  int set_from_packed_sfen(const Tools::PackedSfen& sfen, StateInfo* si, Thread* th);
+
+  void clear() { std::memset(this, 0, sizeof(Position)); }
+
+  // Give the board, hand piece, and turn, and return the sfen.
+  //static std::string sfen_from_rawdata(Piece board[81], Hand hands[2], Color turn, int gamePly);
+
+  // Returns the position of the ball on the c side.
+  Square king_square(Color c) const { return lsb(pieces(c, KING)); }
 
 private:
   // Initialization helpers (used while setting up a position)
@@ -193,11 +219,11 @@ private:
   int castlingRightsMask[SQUARE_NB];
   Square castlingRookSquare[CASTLING_RIGHT_NB];
   Bitboard castlingPath[CASTLING_RIGHT_NB];
+  Thread* thisThread;
+  StateInfo* st;
   int gamePly;
   Color sideToMove;
   Score psq;
-  Thread* thisThread;
-  StateInfo* st;
   bool chess960;
 };
 
@@ -299,10 +325,6 @@ inline Bitboard Position::pinners(Color c) const {
 
 inline Bitboard Position::check_squares(PieceType pt) const {
   return st->checkSquares[pt];
-}
-
-inline bool Position::is_discovered_check_on_king(Color c, Move m) const {
-  return st->blockersForKing[c] & from_sq(m);
 }
 
 inline bool Position::pawn_passed(Color c, Square s) const {
@@ -417,6 +439,8 @@ inline StateInfo* Position::state() const {
 
   return st;
 }
+
+static const char* const StartFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 } // namespace Stockfish
 
